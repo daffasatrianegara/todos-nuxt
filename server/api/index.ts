@@ -1,6 +1,6 @@
 export default defineEventHandler(() => {
     return {
-        status: "success",
+        status: "Success",
         message: "hello world!"
     }
 })
