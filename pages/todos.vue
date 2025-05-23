@@ -1,6 +1,10 @@
 <script lang="ts" setup>
+useHead({
+  title: "Data Todo | TodoLagi",
+});
+
 type Todo = {
-  id: number;
+  id: string;
   title: string;
   description: string;
   status: boolean;
@@ -12,80 +16,117 @@ type TodoResponse = {
   data: Todo[];
 };
 
-const selectedTodo = ref<Todo | null>(null)
-const isUpdated = ref<boolean>(false)
+const debounceDelay = 500; // ms
+let debounceTimeout: ReturnType<typeof setTimeout>;
 
-const { data: todos, refresh: refreshTodos } = await useAsyncData<TodoResponse>("todos", () =>
-  $fetch("/api/todos")
+const selectedTodo = ref<Todo | null>(null);
+const isUpdated = ref<boolean>(false);
+const sort = ref<"desc" | "asc" | null>("desc");
+const q = ref<string>("");
+
+const key = ref(`todos-${sort.value}-${q.value}`);
+
+watch(
+  [sort, q],
+  () => {
+    if (debounceTimeout) clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(() => {
+      key.value = `todos-${sort.value}-${q.value}`;
+    }, debounceDelay);
+  },
+  { immediate: true }
+);
+
+const { data: todos, refresh: refreshTodos } = await useAsyncData<TodoResponse>(
+  key,
+  () => $fetch(`/api/todos?order=${sort.value}&search=${q.value}`)
 );
 
 const setDataTodo = async (todoVal: Todo) => {
-  selectedTodo.value = todoVal
-  isUpdated.value = true
-}
+  selectedTodo.value = todoVal;
+  isUpdated.value = true;
+};
 
-const updateStatusTodo = async (id: number) => {
+const handleUpsertTodo = async (
+  title: string,
+  description: string,
+  id?: number | string
+) => {
+  console.log(title, description, id, isUpdated.value);
+  if (id && isUpdated.value) {
+    await $fetch(`/api/todos/${id}`, {
+      method: "PUT",
+      body: {
+        title,
+        description,
+      },
+    });
+
+    selectedTodo.value = null;
+    isUpdated.value = false;
+    await refreshTodos();
+  } else if (id === undefined && !isUpdated.value) {
+    console.log("tambah");
+    await $fetch("/api/todos", {
+      method: "POST",
+      body: {
+        title,
+        description,
+      },
+    });
+
+    await refreshTodos();
+  } else {
+    console.error("gagal...");
+  }
+};
+
+const updateStatusTodo = async (id: string) => {
   await $fetch(`/api/todos/status/${id}`, { method: "PUT" });
   await refreshTodos();
 };
 
-const deleteTodo = async (id: number) => {
-  await $fetch(`/api/todos/${id}`, { method: "DELETE" })
-  await refreshTodos()
-}
+const deleteTodo = async (id: string) => {
+  await $fetch(`/api/todos/${id}`, { method: "DELETE" });
+  await refreshTodos();
+};
 </script>
 
 <template>
   <div class="min-h-screen">
-    <h1 class="text-black font-semibold text-2xl">Todo:</h1>
-    <p>{{ selectedTodo !== null ? "update" : "add" }}</p>
+    <InputSection
+      :id="selectedTodo?.id"
+      :title="selectedTodo?.title"
+      :description="selectedTodo?.description"
+      :status="isUpdated"
+      :onHandle="handleUpsertTodo"
+      :onCancel="
+        () => {
+          isUpdated = false;
+          selectedTodo = null;
+        }
+      "
+    />
+    <div class="flex justify-center gap-3">
+      <input
+        class="h-8 border-1 border-gray-500 rounded mt-5 mb-8 ps-2 text-black w-[100vh]"
+        v-model="q"
+        type="text"
+        placeholder="Cari Data..."
+      />
+    </div>
     <div class="w-full px-5">
       <div class="flex flex-wrap justify-center gap-3">
-        <div
+        <CardTodos
           v-for="todo in todos?.data"
           :key="todo.id"
-          class="p-3 border-1 rounded-lg w-[30%] flex flex-col"
-          :class="todo.status ? 'bg-green-500' : 'bg-red-500'"
-        >
-          <div class="flex items-center">
-            <p class="text-xl font-bold text-white">{{ todo.title }}</p>
-            <div
-              class="ms-auto px-5 py-1 rounded"
-              :class="todo.status ? 'bg-green-400' : 'bg-red-400'"
-            >
-              <p class="text-base font-semibold text-white">
-                {{ todo.status ? "Selesai" : "Belum Selesai" }}
-              </p>
-            </div>
-          </div>
-          <p class="text-base my-1 text-white">{{ todo.description }}</p>
-          <p class="text-xs text-end text-white mt-auto">
-            Dibuat pada: {{ new Date(todo.createdAt).toLocaleString() }}
-          </p>
-          <div class="flex gap-3 mt-3 justify-end">
-            <button
-              class="bg-yellow-400 text-black py-1 px-3 font-semibold text-sm rounded cursor-pointer hover:bg-yellow-300"
-              :class="todo.status ? 'hidden' : ''"
-              @click="setDataTodo(todo)"
-            >
-              Update
-            </button>
-            <button
-              class="bg-green-500 text-white py-1 px-3 font-semibold text-sm rounded cursor-pointer hover:bg-green-400"
-              :class="todo.status ? 'hidden' : ''"
-              @click="updateStatusTodo(todo.id)"
-            >
-              Selesai
-            </button>
-            <button
-              class="bg-red-500 text-white py-1 px-3 font-semibold text-sm rounded cursor-pointer hover:bg-red-400"
-              :class="todo.status ? '' : 'hidden'"
-              @click="deleteTodo(todo.id)"
-            >
-              Delete
-            </button>
-          </div>
-        </div>
+          v-bind="{
+            ...todo,
+            onUpdateStatus: updateStatusTodo,
+            onDelete: deleteTodo,
+            onSetData: setDataTodo,
+          }"
+        />
       </div>
     </div>
   </div>
